@@ -10,13 +10,6 @@ from scipy import stats #The SciPy stats module
 stocks = pd.read_csv('sp_500_stocks.csv')
 from secrets import IEX_CLOUD_API_TOKEN
 
-symbol = 'AAPL'
-api_url = f'https://sandbox.iexapis.com/stable/stock/{symbol}/quote?token={IEX_CLOUD_API_TOKEN}'
-data = requests.get(api_url).json()
-
-pe_ratio = data['peRatio']
-
-
 # Function sourced from
 # https://stackoverflow.com/questions/312443/how-do-you-split-a-list-into-evenly-sized-chunks
 def chunks(lst, n):
@@ -25,24 +18,24 @@ def chunks(lst, n):
         yield lst[i:i + n]
 
 
-symbol_groups = list(chunks(stocks['Ticker'], 100))
-symbol_strings = []
-for i in range(0, len(symbol_groups)):
-    symbol_strings.append(','.join(symbol_groups[i]))
-#     print(symbol_strings[i])
+ticker_gr = list(chunks(stocks['Ticker'], 100))
+tickerString = []
+for i in range(0, len(ticker_gr)):
+    tickerString.append(','.join(ticker_gr[i]))
+#     print(tickerString[i])
 
 my_columns = ['Ticker', 'Price', 'Price-to-Earnings Ratio', 'Number of Shares to Buy']
 
 
 
-final_dataframe = pd.DataFrame(columns = my_columns)
+final_data = pd.DataFrame(columns = my_columns)
 
-for symbol_string in symbol_strings:
-#     print(symbol_strings)
-    batch_api_call_url = f'https://sandbox.iexapis.com/stable/stock/market/batch/?types=quote&symbols={symbol_string}&token={IEX_CLOUD_API_TOKEN}'
+for ticker in tickerString:
+#     print(tickerString)
+    batch_api_call_url = f'https://sandbox.iexapis.com/stable/stock/market/batch/?types=quote&symbols={ticker}&token={IEX_CLOUD_API_TOKEN}'
     data = requests.get(batch_api_call_url).json()
-    for symbol in symbol_string.split(','):
-        final_dataframe = final_dataframe.append(
+    for symbol in ticker.split(','):
+        final_data = final_data.append(
                                         pd.Series([symbol,
                                                    data[symbol]['quote']['latestPrice'],
                                                    data[symbol]['quote']['peRatio'],
@@ -52,14 +45,14 @@ for symbol_string in symbol_strings:
                                         ignore_index = True)
 
 
-final_dataframe.sort_values('Price-to-Earnings Ratio', inplace = True)
-final_dataframe = final_dataframe[final_dataframe['Price-to-Earnings Ratio'] > 0]
-final_dataframe = final_dataframe[:50]
-final_dataframe.reset_index(inplace = True)
-final_dataframe.drop('index', axis=1, inplace = True)
+final_data.sort_values('Price-to-Earnings Ratio', inplace = True)
+final_data = final_data[final_data['Price-to-Earnings Ratio'] > 0]
+final_data = final_data[:50]
+final_data.reset_index(inplace = True)
+final_data.drop('index', axis=1, inplace = True)
 
 
-def portfolio_input():
+def input():
     global portfolio_size
     portfolio_size = input("Enter the value of your portfolio:")
 
@@ -69,13 +62,6 @@ def portfolio_input():
         print("That's not a number! \n Try again:")
         portfolio_size = input("Enter the value of your portfolio:")
 
-# # Here you can try out any amount of money you want to invest in
-# portfolio_input()
-#
-# position_size = float(portfolio_size) / len(final_dataframe.index)
-# for i in range(0, len(final_dataframe['Ticker'])):
-#     final_dataframe.loc[i, 'Number of Shares to Buy'] = math.floor(position_size / final_dataframe['Price'][i])
-# final_dataframe
 
 
 rv_columns = [
@@ -95,12 +81,12 @@ rv_columns = [
     'RV Score'
 ]
 
-rv_dataframe = pd.DataFrame(columns=rv_columns)
+robust_value = pd.DataFrame(columns=rv_columns)
 
-for symbol_string in symbol_strings:
-    batch_api_call_url = f'https://sandbox.iexapis.com/stable/stock/market/batch?symbols={symbol_string}&types=quote,advanced-stats&token={IEX_CLOUD_API_TOKEN}'
+for ticker in tickerString:
+    batch_api_call_url = f'https://sandbox.iexapis.com/stable/stock/market/batch?symbols={ticker}&types=quote,advanced-stats&token={IEX_CLOUD_API_TOKEN}'
     data = requests.get(batch_api_call_url).json()
-    for symbol in symbol_string.split(','):
+    for symbol in ticker.split(','):
         enterprise_value = data[symbol]['advanced-stats']['enterpriseValue']
         ebitda = data[symbol]['advanced-stats']['EBITDA']
         gross_profit = data[symbol]['advanced-stats']['grossProfit']
@@ -115,7 +101,7 @@ for symbol_string in symbol_strings:
         except TypeError:
             ev_to_gross_profit = np.NaN
 
-        rv_dataframe = rv_dataframe.append(
+        robust_value = robust_value.append(
             pd.Series([
                 symbol,
                 data[symbol]['quote']['latestPrice'],
@@ -138,9 +124,9 @@ for symbol_string in symbol_strings:
 
 #Dealing with missing data
 for column in ['Price-to-Earnings Ratio', 'Price-to-Book Ratio','Price-to-Sales Ratio',  'EV/EBITDA','EV/GP']:
-    rv_dataframe[column].fillna(rv_dataframe[column].mean(), inplace = True)
+    robust_value[column].fillna(robust_value[column].mean(), inplace = True)
 
-rv_dataframe[rv_dataframe.isnull().any(axis=1)]
+robust_value[robust_value.isnull().any(axis=1)]
 
 metrics = {
             'Price-to-Earnings Ratio': 'PE Percentile',
@@ -150,37 +136,37 @@ metrics = {
             'EV/GP':'EV/GP Percentile'
 }
 
-for row in rv_dataframe.index:
+for row in robust_value.index:
     for metric in metrics.keys():
-        rv_dataframe.loc[row, metrics[metric]] = stats.percentileofscore(rv_dataframe[metric], rv_dataframe.loc[row, metric])/100
+        robust_value.loc[row, metrics[metric]] = stats.percentileofscore(robust_value[metric], robust_value.loc[row, metric])/100
 
 # Print each percentile score to make sure it was calculated properly
 for metric in metrics.values():
-    print(rv_dataframe[metric])
+    print(robust_value[metric])
 
 
 from statistics import mean
 
-for row in rv_dataframe.index:
-    value_percentiles = []
+for row in robust_value.index:
+    percent = []
     for metric in metrics.keys():
-        value_percentiles.append(rv_dataframe.loc[row, metrics[metric]])
-    rv_dataframe.loc[row, 'RV Score'] = mean(value_percentiles)
+        percent.append(robust_value.loc[row, metrics[metric]])
+    robust_value.loc[row, 'RV Score'] = mean(percent)
 
-rv_dataframe.sort_values(by = 'RV Score', inplace = True)
-rv_dataframe = rv_dataframe[:50]
-rv_dataframe.reset_index(drop = True, inplace = True)
+robust_value.sort_values(by = 'RV Score', inplace = True)
+robust_value = robust_value[:50]
+robust_value.reset_index(drop = True, inplace = True)
 
 
-portfolio_input()
+input()
 
-position_size = float(portfolio_size) / len(rv_dataframe.index)
-for i in range(0, len(rv_dataframe['Ticker'])-1):
-    rv_dataframe.loc[i, 'Number of Shares to Buy'] = math.floor(position_size / rv_dataframe['Price'][i])
+quantity = float(portfolio_size) / len(robust_value.index)
+for i in range(0, len(robust_value['Ticker'])-1):
+    robust_value.loc[i, 'Number of Shares to Buy'] = math.floor(quantity / robust_value['Price'][i])
 
 
 writer = pd.ExcelWriter('value_strategy.xlsx', engine='xlsxwriter')
-rv_dataframe.to_excel(writer, sheet_name='Value Strategy', index = False)
+robust_value.to_excel(writer, sheet_name='Value Strategy', index = False)
 
 
 background_color = '#0a0a23'
